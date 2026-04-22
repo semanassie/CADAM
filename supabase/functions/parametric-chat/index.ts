@@ -144,10 +144,14 @@ function markPendingToolsAsError(content: Content): Content {
   };
 }
 
-// Supabase edge functions have a wall-clock budget (~400s on Pro). Abort
-// upstream fetches well before that so the server-side error paths run and
-// flush a terminal state, instead of the runtime killing us mid-stream.
-const UPSTREAM_FETCH_TIMEOUT_MS = 4 * 60 * 1000;
+// Single request-scoped budget. Supabase edge functions have a ~400s
+// wall-clock on Pro, so we anchor one deadline to the start of the
+// request and share it across every upstream fetch. Independent per-fetch
+// timers would compound (agent 4 min + code-gen 4 min = 8 min), blowing
+// past the edge budget and getting SIGKILLed — exactly the failure mode
+// this file is meant to prevent.
+const REQUEST_BUDGET_MS = 350 * 1000;
+const MIN_ABORT_MS = 1000;
 
 // Anthropic block types for type safety
 interface AnthropicTextBlock {
@@ -439,6 +443,13 @@ Deno.serve(async (req) => {
     });
   }
 
+  // Shared deadline: every upstream fetch in this request gets at most
+  // `requestDeadline - now` ms before aborting, so the agent + code-gen
+  // fetches together can never outlive the Supabase edge wall-clock.
+  const requestDeadline = Date.now() + REQUEST_BUDGET_MS;
+  const remainingBudgetMs = () =>
+    Math.max(MIN_ABORT_MS, requestDeadline - Date.now());
+
   const supabaseClient = getAnonSupabaseClient({
     global: {
       headers: { Authorization: req.headers.get('Authorization') ?? '' },
@@ -659,12 +670,12 @@ Deno.serve(async (req) => {
       requestBody.max_tokens = 20000;
     }
 
-    // Matched to the code-gen budget so neither upstream can outlive
-    // the Supabase wall-clock silently.
+    // Shares the request-scoped deadline with code-gen below so the two
+    // fetches together can never outlive the Supabase wall-clock budget.
     const agentAbort = new AbortController();
     const agentTimeout = setTimeout(
       () => agentAbort.abort(new Error('agent upstream timeout')),
-      UPSTREAM_FETCH_TIMEOUT_MS,
+      remainingBudgetMs(),
     );
 
     const response = await fetch(OPENROUTER_API_URL, {
@@ -1047,14 +1058,15 @@ Deno.serve(async (req) => {
                 return out;
               };
 
-              // Hard timeout below the Supabase edge budget so a hung
-              // upstream aborts in userland, letting the catch below mark
-              // this tool call as `error` instead of being silently SIGKILLed.
+              // Draws from the same request deadline as the agent fetch —
+              // whatever budget remains after the outer stream is ours.
+              // A hung upstream aborts in userland so the catch below
+              // marks this tool call `error` instead of being SIGKILLed.
               const codeGenAbort = new AbortController();
               const codeGenTimeout = setTimeout(
                 () =>
                   codeGenAbort.abort(new Error('code-gen upstream timeout')),
-                UPSTREAM_FETCH_TIMEOUT_MS,
+                remainingBudgetMs(),
               );
               try {
                 const codeResponse = await fetch(OPENROUTER_API_URL, {
