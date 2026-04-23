@@ -16,18 +16,52 @@ const ensurePermission = async () => {
   return perm === 'granted';
 };
 
+const ENVIRONMENT = import.meta.env.VITE_SENTRY_ENVIRONMENT;
+const IS_LOCAL = ENVIRONMENT === 'local';
+
+const LOCAL_FAKE_USER: User = {
+  id: 'local-dev-user-00000000-0000-0000-0000-000000000000',
+  aud: 'authenticated',
+  role: '',
+  email: 'localdev@cadam.local',
+  email_confirmed_at: new Date().toISOString(),
+  app_metadata: { provider: 'email', providers: ['email'] },
+  user_metadata: { full_name: 'Local Developer' },
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+} as unknown as User;
+
+const LOCAL_FAKE_SESSION: Session = {
+  access_token: 'fake-access-token-for-local-dev',
+  token_type: 'bearer',
+  expires_in: 3600,
+  refresh_token: 'fake-refresh-token',
+  user: LOCAL_FAKE_USER,
+} as unknown as Session;
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(
-    JSON.parse(localStorage.getItem('session') ?? 'null'),
+    IS_LOCAL
+      ? LOCAL_FAKE_SESSION
+      : JSON.parse(localStorage.getItem('session') ?? 'null'),
   );
-  const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [user, setUser] = useState<User | null>(
+    IS_LOCAL ? LOCAL_FAKE_USER : null,
+  );
+  const [isLoading, setIsLoading] = useState(!IS_LOCAL);
   const navigate = useNavigate();
   const posthogSent = useRef(false);
   const queryClient = useQueryClient();
 
   // Initialize auth state and set up session listener
   useEffect(() => {
+    if (IS_LOCAL) {
+      setSession(LOCAL_FAKE_SESSION);
+      setUser(LOCAL_FAKE_USER);
+      setIsLoading(false);
+      return;
+    }
+
     const initializeAuth = async () => {
       try {
         const {
