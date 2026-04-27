@@ -24,6 +24,24 @@ initSentry();
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? '';
 
+// Models whose OpenRouter listing serves at least one provider that does NOT
+// support tool calling. For these we set `provider: { require_parameters: true }`
+// on the agent (tools-bearing) call so OpenRouter excludes the tool-incompatible
+// providers from the routing pool. The code-gen call sends no tools and so
+// doesn't need this constraint. Keep this list scoped — adding a model that
+// doesn't actually have mixed-provider tool support just narrows routing for
+// no reason.
+const REQUIRES_TOOL_CAPABLE_PROVIDER = new Set<string>([
+  'deepseek/deepseek-v4-pro',
+]);
+
+// Models whose OpenRouter input modality is text-only. We strip image blocks
+// from these requests because OpenRouter rejects image content for text-only
+// models and the whole turn fails. Authoritative server-side — must mirror
+// `supportsVision: false` entries in PARAMETRIC_MODELS (src/lib/utils.ts) but
+// is not derived from the client to avoid stale-client/direct-API bypass.
+const TEXT_ONLY_MODELS = new Set<string>(['deepseek/deepseek-v4-pro']);
+
 // Helper to stream updated assistant message rows.
 // Silently noop if the controller is already closed (e.g. the client
 // disconnected mid-stream). Without this guard the enqueue throws
@@ -184,6 +202,13 @@ interface OpenRouterRequest {
   reasoning?: {
     max_tokens?: number;
     effort?: 'high' | 'medium' | 'low';
+  };
+  // OpenRouter provider routing controls. `require_parameters: true` filters
+  // out providers that don't support every parameter we send (e.g. `tools`).
+  // Without this, V4 Pro requests get load-balanced to GMICloud / SiliconFlow,
+  // which don't support tool calling, and the whole turn fails.
+  provider?: {
+    require_parameters?: boolean;
   };
 }
 
@@ -498,6 +523,9 @@ Deno.serve(async (req) => {
     thinking?: boolean;
   } = await req.json();
 
+  // Authoritative server-side capability: don't trust the client to self-report.
+  const supportsVision = !TEXT_ONLY_MODELS.has(model);
+
   const { data: messages, error: messagesError } = await supabaseClient
     .from('messages')
     .select('*')
@@ -575,11 +603,21 @@ Deno.serve(async (req) => {
           // formatUserMessage returns content as an array
           return {
             role: 'user' as const,
-            content: formatted.content.map((block: unknown) => {
+            content: formatted.content.flatMap((block: unknown) => {
               if (isAnthropicBlock(block)) {
                 if (block.type === 'text') {
-                  return { type: 'text', text: block.text };
+                  return [{ type: 'text', text: block.text }];
                 } else if (block.type === 'image') {
+                  // Text-only models reject image blocks. Drop them and leave
+                  // a placeholder so the model still knows an image existed.
+                  if (!supportsVision) {
+                    return [
+                      {
+                        type: 'text',
+                        text: '[image omitted: selected model does not accept images]',
+                      },
+                    ];
+                  }
                   // Handle both URL and base64 image formats
                   let imageUrl: string;
                   if (
@@ -593,18 +631,20 @@ Deno.serve(async (req) => {
                     imageUrl = block.source.url;
                   } else {
                     // Fallback or error case
-                    return block;
+                    return [block];
                   }
-                  return {
-                    type: 'image_url',
-                    image_url: {
-                      url: imageUrl,
-                      detail: 'auto', // Auto-detect appropriate detail level
+                  return [
+                    {
+                      type: 'image_url',
+                      image_url: {
+                        url: imageUrl,
+                        detail: 'auto', // Auto-detect appropriate detail level
+                      },
                     },
-                  };
+                  ];
                 }
               }
-              return block;
+              return [block];
             }),
           };
         }
@@ -629,6 +669,12 @@ Deno.serve(async (req) => {
       stream: true,
       max_tokens: 16000,
     };
+
+    // Constrain provider routing only when the model has providers that don't
+    // support tool calling — otherwise we'd needlessly narrow the pool.
+    if (REQUIRES_TOOL_CAPABLE_PROVIDER.has(model)) {
+      requestBody.provider = { require_parameters: true };
+    }
 
     // Add reasoning/thinking parameter if requested and supported
     // OpenRouter uses a unified 'reasoning' parameter
@@ -966,6 +1012,8 @@ Deno.serve(async (req) => {
             ];
 
             // Code generation request logic (SSE streaming)
+            // Note: no `provider.require_parameters` here — code-gen doesn't
+            // send tools, so all providers in the pool are eligible.
             const codeRequestBody: OpenRouterRequest = {
               model,
               messages: [
