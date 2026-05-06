@@ -39,7 +39,7 @@ export default defineConfig({
     host: true,
   },
   server: {
-    port: 3000,
+    port: 3004,
     open: false,
   },
   optimizeDeps: {

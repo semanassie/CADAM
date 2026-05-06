@@ -264,11 +264,10 @@ export const PARAMETRIC_MODELS: ModelConfig[] = [
     supportsVision: true,
   },
   {
-    id: 'moonshotai/kimi-k2.6',
-    name: 'Kimi K2.6',
-    description:
-      'Moonshot multimodal model with configurable reasoning, vision, and native tool use',
-    provider: 'MoonshotAI',
+    id: 'openai/gpt-5.5-pro',
+    name: 'GPT-5.5 Pro',
+    description: 'Most powerful OpenAI model with advanced reasoning',
+    provider: 'OpenAI',
     supportsTools: true,
     supportsThinking: true,
     supportsVision: true,

@@ -30,6 +30,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const initializeAuth = async () => {
       try {
+        // Local dev mode: inject fake user when running against mock server
+        if (import.meta.env.VITE_SENTRY_ENVIRONMENT === 'local') {
+          const fakeUser = {
+            id: '00000000-0000-0000-0000-000000000001',
+            email: 'local@adam-cad.com',
+            aud: 'authenticated',
+            role: 'authenticated',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            app_metadata: { provider: 'email' },
+            user_metadata: { full_name: 'Local User' },
+          } as unknown as User;
+          const fakeSession = {
+            access_token: 'fake-access-token',
+            token_type: 'bearer',
+            expires_in: 86400,
+            expires_at: Math.floor(Date.now() / 1000) + 86400,
+            refresh_token: 'fake-refresh-token',
+            user: fakeUser,
+          } as unknown as Session;
+          setSession(fakeSession);
+          setUser(fakeUser);
+          setIsLoading(false);
+          return;
+        }
         const {
           data: { session },
         } = await supabase.auth.refreshSession();
@@ -42,6 +67,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
 
     initializeAuth();
+
+    // Skip Supabase auth listener in local dev mode (it would overwrite fake user with null)
+    if (import.meta.env.VITE_SENTRY_ENVIRONMENT === 'local') {
+      return;
+    }
 
     const {
       data: { subscription },
