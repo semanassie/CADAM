@@ -31,7 +31,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const initializeAuth = async () => {
       try {
         // Local dev mode: inject fake user when running against mock server
-        if (import.meta.env.VITE_SENTRY_ENVIRONMENT === 'local') {
+        if ((import.meta.env.VITE_LOCAL_DEV_AUTH === 'true' && !import.meta.env.PROD)) {
           const fakeUser = {
             id: '00000000-0000-0000-0000-000000000001',
             email: 'local@adam-cad.com',
@@ -69,7 +69,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     initializeAuth();
 
     // Skip Supabase auth listener in local dev mode (it would overwrite fake user with null)
-    if (import.meta.env.VITE_SENTRY_ENVIRONMENT === 'local') {
+    if ((import.meta.env.VITE_LOCAL_DEV_AUTH === 'true' && !import.meta.env.PROD)) {
       return;
     }
 

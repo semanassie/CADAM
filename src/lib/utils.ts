@@ -272,6 +272,16 @@ export const PARAMETRIC_MODELS: ModelConfig[] = [
     supportsThinking: true,
     supportsVision: true,
   },
+  {
+    id: 'moonshotai/kimi-k2.6',
+    name: 'Kimi K2.6',
+    description:
+      'Moonshot multimodal model with configurable reasoning, vision, and native tool use',
+    provider: 'MoonshotAI',
+    supportsTools: true,
+    supportsThinking: true,
+    supportsVision: true,
+  },
 ];
 
 export const CREATIVE_MODELS: ModelConfig[] = [

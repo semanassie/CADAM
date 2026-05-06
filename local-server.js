@@ -493,6 +493,37 @@ app.all('/auth/v1/:path', (req, res) => {
   res.json({});
 });
 
+// NEW: creative-chat — NDJSON streaming stub (same contract as parametric-chat)
+app.post('/functions/v1/creative-chat', async (req, res) => {
+  const { conversationId, messageId, newMessageId } = req.body;
+  res.setHeader('Content-Type', 'application/x-ndjson');
+  res.setHeader('Cache-Control', 'no-cache');
+  const msg = {
+    id: newMessageId,
+    conversation_id: conversationId,
+    role: 'assistant',
+    parent_message_id: messageId,
+    content: { text: 'Creative mesh generation is not available in local mode.', type: 'text' },
+    created_at: new Date().toISOString(),
+    rating: null,
+  };
+  res.write(JSON.stringify(msg) + '\n');
+  res.end();
+});
+
+// NEW: mesh — stub for upscale/generative-mesh flows
+app.all('/functions/v1/mesh', (req, res) => {
+  res.json({ status: 'not_implemented', message: 'Mesh generation is not available in local mode.' });
+});
+
+// NEW: jackson-pollock — PostHog no-op proxy (silences 404 console spam)
+app.all('/functions/v1/jackson-pollock', (req, res) => {
+  res.status(200).json({ status: 'ok' });
+});
+app.all('/functions/v1/jackson-pollock/:path', (req, res) => {
+  res.status(200).json({ status: 'ok' });
+});
+
 app.all('/functions/v1/:path', (req, res) => {
   console.log(`[stub] ${req.method} ${req.url}`);
   res.json({});
