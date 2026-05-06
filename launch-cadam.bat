@@ -30,24 +30,16 @@ if not exist "node_modules" (
 echo.
 echo  Starting on %APP_URL%
 echo  Browser will open in ~5 seconds...
-echo  Press Ctrl+C to stop.
+echo  Press Ctrl+C to stop both servers.
 echo.
-
-REM Kill existing mock server port to prevent EADDRINUSE
-call npx kill-port 54321 >nul 2>&1
-call npx kill-port %PORT% >nul 2>&1
-
-REM Start the mock backend server in the background
-start /B "CADAM Backend" cmd /c "node local-server.js"
 
 REM Open browser after ~5s using ping delay
 start /min cmd /c "ping 127.0.0.1 -n 6 >nul && start %APP_URL%"
 
-REM Start Vite frontend on fixed port
-call npm run dev -- --port %PORT%
+REM Run both backend and frontend under concurrently so Ctrl+C kills both
+call npx concurrently --kill-others --names "BACKEND,FRONTEND" --prefix-colors "cyan,green" "node local-server.js" "npm run dev -- --port %PORT%"
 
 if %errorlevel% neq 0 (
     echo.
-    echo  CADAM stopped with an error.
-    pause
+    echo  CADAM stopped.
 )

@@ -68,7 +68,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     initializeAuth();
 
-    // Skip Supabase auth listener in local dev mode (it would overwrite fake user with null)
+    // Skip Supabase auth listener in local dev mode (it would overwrite fake user with null).
+    // No cleanup needed here: in local mode we return before creating the subscription,
+    // so there's nothing to unsubscribe. In production the subscription is created
+    // and cleaned up by the return function below.
     if ((import.meta.env.VITE_LOCAL_DEV_AUTH === 'true' && !import.meta.env.PROD)) {
       return;
     }

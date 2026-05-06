@@ -1,4 +1,5 @@
 import * as Sentry from '@sentry/react';
+import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   createBrowserRouter,
@@ -130,7 +131,8 @@ createRoot(document.getElementById('root')!).render(
   isSupabaseConfigMissing ? (
     <MissingConfig />
   ) : (
-    <PostHogProvider
+    <StrictMode>
+      <PostHogProvider
         apiKey={import.meta.env.VITE_POSTHOG_PROJECT_KEY ?? ''}
         options={{
           api_host: `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/jackson-pollock`,
@@ -139,5 +141,6 @@ createRoot(document.getElementById('root')!).render(
       >
         <RouterProvider router={router} future={{ v7_startTransition: true }} />
       </PostHogProvider>
+    </StrictMode>
   ),
 );
