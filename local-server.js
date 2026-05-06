@@ -3,11 +3,29 @@ import cors from 'cors';
 import OpenAI from 'openai';
 import crypto from 'crypto';
 import http from 'http';
+import fs from 'fs';
+import path from 'path';
+
+// Load .env.local into process.env (Node doesn't do this natively)
+const envPath = path.join(process.cwd(), '.env.local');
+if (fs.existsSync(envPath)) {
+  fs.readFileSync(envPath, 'utf-8')
+    .split('\n')
+    .forEach((line) => {
+      const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)?\s*$/);
+      if (match) {
+        const key = match[1];
+        let val = match[2] || '';
+        val = val.replace(/^["']|["']$/g, ''); // strip quotes
+        if (!process.env[key]) process.env[key] = val;
+      }
+    });
+}
 
 const app = express();
 const PORT = 54321;
 
-const POE_API_KEY = 'E1p0wfBnxELZv-cJra1aPC7ZbCAFj7Vt7PAgQb2ujCA';
+const POE_API_KEY = process.env.POE_API_KEY || '';  // Load from .env.local
 
 // Poe API via OpenAI-compatible endpoint
 const poe = new OpenAI({
@@ -325,13 +343,15 @@ app.post('/functions/v1/title-generator', async (req, res) => {
 });
 
 // Parametric chat - the main AI endpoint
+// Emits NDJSON (newline-delimited JSON) Message objects, matching the real
+// Supabase edge function contract that the client streaming parser expects.
 app.post('/functions/v1/parametric-chat', async (req, res) => {
   const { conversationId, messageId, model, newMessageId } = req.body;
   const poeModel = mapModel(model);
 
   console.log(`[parametric-chat] model=${model} -> poe=${poeModel}, conv=${conversationId}`);
 
-  res.setHeader('Content-Type', 'text/plain');
+  res.setHeader('Content-Type', 'application/x-ndjson');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
@@ -350,7 +370,16 @@ app.post('/functions/v1/parametric-chat', async (req, res) => {
     // Safety filters
     const blockedTerms = ['text()', 'import(', 'surface('];
     if (blockedTerms.some(t => userText.toLowerCase().includes(t))) {
-      res.write('Error: Blocked term in prompt.');
+      const errMsg = {
+        id: newMessageId,
+        conversation_id: conversationId,
+        role: 'assistant',
+        parent_message_id: messageId,
+        content: { text: 'Error: Blocked term in prompt.', type: 'text' },
+        created_at: new Date().toISOString(),
+        rating: null,
+      };
+      res.write(JSON.stringify(errMsg) + '\n');
       res.end();
       return;
     }
@@ -362,6 +391,15 @@ app.post('/functions/v1/parametric-chat', async (req, res) => {
       { role: 'user', content: userText },
     ];
 
+    const baseMessage = {
+      id: newMessageId,
+      conversation_id: conversationId,
+      role: 'assistant',
+      parent_message_id: messageId,
+      rating: null,
+      created_at: new Date().toISOString(),
+    };
+
     const stream = await poe.chat.completions.create({
       model: poeModel,
       messages: apiMessages,
@@ -372,32 +410,42 @@ app.post('/functions/v1/parametric-chat', async (req, res) => {
     let fullCode = '';
     for await (const chunk of stream) {
       const text = chunk.choices?.[0]?.delta?.content || '';
-      if (text) {
-        fullCode += text;
-        res.write(text);
-      }
+      if (!text) continue;
+      fullCode += text;
+      // Emit a full Message snapshot per delta � this is what the client expects
+      const deltaMsg = {
+        ...baseMessage,
+        content: { text: fullCode, type: 'openscad', parameters: [] },
+      };
+      res.write(JSON.stringify(deltaMsg) + '\n');
     }
 
-    // Parse parameters from the generated code
+    // Final frame with parsed parameters
     const parameters = parseParameters(fullCode);
-
-    // Store assistant message
-    const assistantMsg = {
-      id: newMessageId,
-      conversation_id: conversationId,
-      role: 'assistant',
+    const finalMessage = {
+      ...baseMessage,
       content: { text: fullCode, type: 'openscad', parameters },
-      created_at: new Date().toISOString(),
-      rating: null,
     };
+    res.write(JSON.stringify(finalMessage) + '\n');
+
+    // Persist the same object to the in-memory messages map so REST GETs match
     const convMsgs2 = messages.get(conversationId) || [];
-    convMsgs2.push(assistantMsg);
+    convMsgs2.push(finalMessage);
     messages.set(conversationId, convMsgs2);
 
     res.end();
   } catch (err) {
     console.error('[parametric-chat] Error:', err.message);
-    res.write(`Error: ${err.message}`);
+    const errMsg = {
+      id: newMessageId,
+      conversation_id: conversationId,
+      role: 'assistant',
+      parent_message_id: messageId,
+      content: { text: `Error: ${err.message}`, type: 'text' },
+      created_at: new Date().toISOString(),
+      rating: null,
+    };
+    res.write(JSON.stringify(errMsg) + '\n');
     res.end();
   }
 });
@@ -474,8 +522,13 @@ server.on('upgrade', (req, socket) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`\n🔵 CADAM Local Server running on http://127.0.0.1:${PORT}`);
-  console.log(`   Using Poe API with key: ${POE_API_KEY.slice(0, 8)}...`);
-  console.log(`   Default model: Gemini-3.1-Pro`);
-  console.log(`   Mocking: Auth, Database, Edge Functions + Realtime WS\n`);
+  console.log("\nCADAM Local Server running on http://127.0.0.1:" + PORT);
+  if (!POE_API_KEY) {
+    console.log('   WARNING: POE_API_KEY not set. Set it in .env.local or environment.');
+    console.log('   The parametric-chat endpoint will fail without a valid key.');
+  } else {
+    console.log("   Using Poe API with key: " + POE_API_KEY.slice(0, 8) + "...");
+  }
+  console.log("   Default model: Gemini-3.1-Pro");
+  console.log("   Mocking: Auth, Database, Edge Functions + Realtime WS\n");
 });
