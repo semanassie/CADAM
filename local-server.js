@@ -25,7 +25,7 @@ if (fs.existsSync(envPath)) {
 const app = express();
 const PORT = 54321;
 
-const POE_API_KEY = process.env.POE_API_KEY || '';  // Load from .env.local
+const POE_API_KEY = process.env.POE_API_KEY || ''; // Load from .env.local
 
 // Poe API via OpenAI-compatible endpoint
 const poe = new OpenAI({
@@ -43,9 +43,9 @@ const MODEL_MAP = {
   'anthropic/claude-opus-4.7': 'claude-opus-4.7',
   'openai/gpt-5.5': 'gpt-5.5',
   'openai/gpt-5.5-pro': 'gpt-5.5-pro',
-  'moonshotai/kimi-k2.6': 'gpt-5.5-pro',  // fallback for legacy refs
-  'fast': 'gemini-3.1-pro',
-  'quality': 'claude-opus-4.7',
+  'moonshotai/kimi-k2.6': 'gpt-5.5-pro', // fallback for legacy refs
+  fast: 'gemini-3.1-pro',
+  quality: 'claude-opus-4.7',
 };
 
 function mapModel(frontendModel) {
@@ -78,11 +78,13 @@ const FAKE_SESSION = {
 };
 
 // Middleware
-app.use(cors({
-  origin: true,
-  credentials: true,
-  exposedHeaders: ['content-range', 'x-total-count', 'apikey'],
-}));
+app.use(
+  cors({
+    origin: true,
+    credentials: true,
+    exposedHeaders: ['content-range', 'x-total-count', 'apikey'],
+  }),
+);
 app.use(express.json({ limit: '50mb' }));
 
 // Log all requests for debugging
@@ -97,11 +99,17 @@ app.use((req, res, next) => {
 function filterByQuery(items, query) {
   let result = [...items];
   for (const [key, val] of Object.entries(query)) {
-    if (key === 'select' || key === 'order' || key === 'limit' || key === 'offset') continue;
+    if (
+      key === 'select' ||
+      key === 'order' ||
+      key === 'limit' ||
+      key === 'offset'
+    )
+      continue;
     const str = String(val);
     const eqMatch = str.match(/^eq\.(.+)/);
     if (eqMatch) {
-      result = result.filter(item => String(item[key]) === eqMatch[1]);
+      result = result.filter((item) => String(item[key]) === eqMatch[1]);
     }
   }
   return result;
@@ -110,7 +118,10 @@ function filterByQuery(items, query) {
 // Helper: return single or array based on Accept header
 function sendResult(req, res, items) {
   const accept = req.headers['accept'] || '';
-  if (accept.includes('vnd.pgrst.object') || accept.includes('application/vnd.pgrst.object+json')) {
+  if (
+    accept.includes('vnd.pgrst.object') ||
+    accept.includes('application/vnd.pgrst.object+json')
+  ) {
     return res.json(items[0] || null);
   }
   return res.json(items);
@@ -217,7 +228,9 @@ app.post('/rest/v1/messages', (req, res) => {
   convMsgs.push(msg);
   messages.set(msg.conversation_id, convMsgs);
 
-  console.log(`[DB] Stored message ${msg.id} (${msg.role}) in conv ${msg.conversation_id}`);
+  console.log(
+    `[DB] Stored message ${msg.id} (${msg.role}) in conv ${msg.conversation_id}`,
+  );
   sendResult(req, res, [msg]);
 });
 
@@ -226,7 +239,7 @@ app.patch('/rest/v1/messages', (req, res) => {
   const cidMatch = (req.query.conversation_id || '').match(/eq\.(.+)/);
   if (idMatch && cidMatch) {
     const convMsgs = messages.get(cidMatch[1]) || [];
-    const idx = convMsgs.findIndex(m => m.id === idMatch[1]);
+    const idx = convMsgs.findIndex((m) => m.id === idMatch[1]);
     if (idx >= 0) {
       Object.assign(convMsgs[idx], req.body);
       return sendResult(req, res, [convMsgs[idx]]);
@@ -242,12 +255,16 @@ app.post('/rest/v1/meshes', (req, res) => res.status(201).json(req.body));
 // Supabase Storage Mock
 app.post('/storage/v1/object/images/:splat', (req, res) => {
   const fileName = req.params.splat || 'mock-image.png';
-  res.status(200).json({ Key: "images/" + fileName });
+  res.status(200).json({ Key: 'images/' + fileName });
 });
 
 app.post('/storage/v1/object/sign/images/:splat', (req, res) => {
   const fileName = req.params.splat || 'mock-image.png';
-  res.status(200).json({ signedURL: "http://127.0.0.1:" + PORT + "/mock-storage/" + fileName });
+  res
+    .status(200)
+    .json({
+      signedURL: 'http://127.0.0.1:' + PORT + '/mock-storage/' + fileName,
+    });
 });
 
 // Profiles
@@ -279,6 +296,18 @@ const AGENT_PROMPT = `You are Adam, an AI CAD editor that creates and modifies O
 Speak back to the user briefly (one or two sentences), then produce OpenSCAD code.
 Keep text concise and helpful.`;
 
+// Extract raw OpenSCAD code from text (strip markdown fences)
+function extractOpenSCADCodeFromText(text) {
+  if (!text) return null;
+  const fenceMatch = text.match(/```(?:openscad)?\s*\n?([\s\S]*?)\n?```/);
+  if (fenceMatch) return fenceMatch[1].trim();
+  // No fence — assume the whole thing is code if it has SCAD-y syntax
+  if (/(\bcube|\bcylinder|\btranslate|\bunion|\bdifference)\s*\(/.test(text)) {
+    return text.trim();
+  }
+  return null;
+}
+
 // Parse OpenSCAD parameters from code
 function parseParameters(code) {
   if (!code) return [];
@@ -309,7 +338,9 @@ function parseParameters(code) {
 
     params.push({
       name,
-      displayName: name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+      displayName: name
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, (c) => c.toUpperCase()),
       value,
       defaultValue: value,
       type,
@@ -328,11 +359,16 @@ app.post('/functions/v1/title-generator', async (req, res) => {
       model: mapModel('anthropic/claude-3.5-haiku'),
       max_tokens: 30,
       messages: [
-        { role: 'system', content: 'Generate a short title (max 25 chars) for a 3D object. Just the name, nothing else.' },
+        {
+          role: 'system',
+          content:
+            'Generate a short title (max 25 chars) for a 3D object. Just the name, nothing else.',
+        },
         { role: 'user', content: text },
       ],
     });
-    let title = response.choices?.[0]?.message?.content?.trim() || 'Adam Object';
+    let title =
+      response.choices?.[0]?.message?.content?.trim() || 'Adam Object';
     title = title.replace(/^["']|["']$/g, '').replace(/^title:\s*/i, '');
     if (title.length > 27) title = title.substring(0, 24) + '...';
     res.json({ title });
@@ -349,7 +385,9 @@ app.post('/functions/v1/parametric-chat', async (req, res) => {
   const { conversationId, messageId, model, newMessageId } = req.body;
   const poeModel = mapModel(model);
 
-  console.log(`[parametric-chat] model=${model} -> poe=${poeModel}, conv=${conversationId}`);
+  console.log(
+    `[parametric-chat] model=${model} -> poe=${poeModel}, conv=${conversationId}`,
+  );
 
   res.setHeader('Content-Type', 'application/x-ndjson');
   res.setHeader('Cache-Control', 'no-cache');
@@ -357,25 +395,35 @@ app.post('/functions/v1/parametric-chat', async (req, res) => {
 
   try {
     const convMsgs = messages.get(conversationId) || [];
-    const userMsg = convMsgs.find(m => m.id === messageId);
+    const userMsg = convMsgs.find((m) => m.id === messageId);
     const userText = userMsg?.content?.text || 'Hello';
 
+    // Build chat history: for assistant messages, prefer content.artifact?.code
+    // so the model sees clean OpenSCAD instead of markdown-wrapped text.
     const chatHistory = convMsgs
-      .filter(m => m.id !== messageId || m.role === 'user')
-      .map(m => ({
+      .filter((m) => m.id !== messageId || m.role === 'user')
+      .map((m) => ({
         role: m.role === 'assistant' ? 'assistant' : 'user',
-        content: m.content?.text || '',
+        content:
+          m.role === 'assistant'
+            ? m.content?.artifact?.code || m.content?.text || ''
+            : m.content?.text || '',
       }));
 
     // Safety filters
     const blockedTerms = ['text()', 'import(', 'surface('];
-    if (blockedTerms.some(t => userText.toLowerCase().includes(t))) {
+    if (blockedTerms.some((t) => userText.toLowerCase().includes(t))) {
       const errMsg = {
         id: newMessageId,
         conversation_id: conversationId,
         role: 'assistant',
         parent_message_id: messageId,
-        content: { text: 'Error: Blocked term in prompt.', type: 'text' },
+        content: {
+          text: 'Error: Blocked term in prompt.',
+          type: 'text',
+          artifact: null,
+          parameters: [],
+        },
         created_at: new Date().toISOString(),
         rating: null,
       };
@@ -384,7 +432,8 @@ app.post('/functions/v1/parametric-chat', async (req, res) => {
       return;
     }
 
-    const systemPrompt = chatHistory.length <= 1 ? STRICT_CODE_PROMPT : AGENT_PROMPT;
+    const systemPrompt =
+      chatHistory.length <= 1 ? STRICT_CODE_PROMPT : AGENT_PROMPT;
     const apiMessages = [
       { role: 'system', content: systemPrompt },
       ...chatHistory.slice(0, -1),
@@ -407,24 +456,44 @@ app.post('/functions/v1/parametric-chat', async (req, res) => {
       max_tokens: 8192,
     });
 
-    let fullCode = '';
+    let fullText = '';
     for await (const chunk of stream) {
       const text = chunk.choices?.[0]?.delta?.content || '';
       if (!text) continue;
-      fullCode += text;
-      // Emit a full Message snapshot per delta � this is what the client expects
+      fullText += text;
+      // Emit a full Message snapshot per delta
       const deltaMsg = {
         ...baseMessage,
-        content: { text: fullCode, type: 'openscad', parameters: [] },
+        content: {
+          text: fullText,
+          type: 'openscad',
+          artifact: {
+            title: 'Generated Shape',
+            version: '1.0.0',
+            code: extractOpenSCADCodeFromText(fullText),
+            parameters: [],
+          },
+          parameters: [],
+        },
       };
       res.write(JSON.stringify(deltaMsg) + '\n');
     }
 
     // Final frame with parsed parameters
-    const parameters = parseParameters(fullCode);
+    const parameters = parseParameters(fullText);
     const finalMessage = {
       ...baseMessage,
-      content: { text: fullCode, type: 'openscad', parameters },
+      content: {
+        text: fullText,
+        type: 'openscad',
+        artifact: {
+          title: 'Generated Shape',
+          version: '1.0.0',
+          code: extractOpenSCADCodeFromText(fullText),
+          parameters,
+        },
+        parameters,
+      },
     };
     res.write(JSON.stringify(finalMessage) + '\n');
 
@@ -441,7 +510,12 @@ app.post('/functions/v1/parametric-chat', async (req, res) => {
       conversation_id: conversationId,
       role: 'assistant',
       parent_message_id: messageId,
-      content: { text: `Error: ${err.message}`, type: 'text' },
+      content: {
+        text: `Error: ${err.message}`,
+        type: 'text',
+        artifact: null,
+        parameters: [],
+      },
       created_at: new Date().toISOString(),
       rating: null,
     };
@@ -503,7 +577,10 @@ app.post('/functions/v1/creative-chat', async (req, res) => {
     conversation_id: conversationId,
     role: 'assistant',
     parent_message_id: messageId,
-    content: { text: 'Creative mesh generation is not available in local mode.', type: 'text' },
+    content: {
+      text: 'Creative mesh generation is not available in local mode.',
+      type: 'text',
+    },
     created_at: new Date().toISOString(),
     rating: null,
   };
@@ -513,7 +590,10 @@ app.post('/functions/v1/creative-chat', async (req, res) => {
 
 // NEW: mesh — stub for upscale/generative-mesh flows
 app.all('/functions/v1/mesh', (req, res) => {
-  res.json({ status: 'not_implemented', message: 'Mesh generation is not available in local mode.' });
+  res.json({
+    status: 'not_implemented',
+    message: 'Mesh generation is not available in local mode.',
+  });
 });
 
 // NEW: jackson-pollock — PostHog no-op proxy (silences 404 console spam)
@@ -538,28 +618,37 @@ server.on('upgrade', (req, socket) => {
     return;
   }
   const key = req.headers['sec-websocket-key'];
-  if (!key) { socket.destroy(); return; }
+  if (!key) {
+    socket.destroy();
+    return;
+  }
   const acceptKey = crypto
     .createHash('sha1')
     .update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
     .digest('base64');
   socket.write(
     'HTTP/1.1 101 Switching Protocols\r\n' +
-    'Upgrade: websocket\r\n' +
-    'Connection: Upgrade\r\n' +
-    `Sec-WebSocket-Accept: ${acceptKey}\r\n\r\n`
+      'Upgrade: websocket\r\n' +
+      'Connection: Upgrade\r\n' +
+      `Sec-WebSocket-Accept: ${acceptKey}\r\n\r\n`,
   );
   socket.on('error', () => {});
 });
 
 server.listen(PORT, () => {
-  console.log("\nCADAM Local Server running on http://127.0.0.1:" + PORT);
+  console.log('\nCADAM Local Server running on http://127.0.0.1:' + PORT);
   if (!POE_API_KEY) {
-    console.log('   WARNING: POE_API_KEY not set. Set it in .env.local or environment.');
-    console.log('   The parametric-chat endpoint will fail without a valid key.');
+    console.log(
+      '   WARNING: POE_API_KEY not set. Set it in .env.local or environment.',
+    );
+    console.log(
+      '   The parametric-chat endpoint will fail without a valid key.',
+    );
   } else {
-    console.log("   Using Poe API with key: " + POE_API_KEY.slice(0, 8) + "...");
+    console.log(
+      '   Using Poe API with key: ' + POE_API_KEY.slice(0, 8) + '...',
+    );
   }
-  console.log("   Default model: Gemini-3.1-Pro");
-  console.log("   Mocking: Auth, Database, Edge Functions + Realtime WS\n");
+  console.log('   Default model: Gemini-3.1-Pro');
+  console.log('   Mocking: Auth, Database, Edge Functions + Realtime WS\n');
 });
